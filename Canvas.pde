@@ -1,29 +1,41 @@
-import msafluid.*;                //MSAFluidライブラリをインポート
+import msafluid.*;
+import processing.net.*;
 
-final float FLUID_WIDTH = 40;     //流体モデルの幅（長さ）。値が小さいほど長い。
+Server server;
 
-float invWidth;                   //幅の逆数
-float invHeight;                  //高さの逆数
-float aspectRatio, aspectRatio2;  //アスペクト比
+final float FLUID_WIDTH = 50;
+
+float invWidth, invHeight;
+float aspectRatio, aspectRatio2;
+
+float serverX = 0;
+float serverY = 0;
 
 MSAFluidSolver2D fluidSolver;
 
 ParticleSystem particleSystem;
 
-boolean drawFluid = false;        //描画するかどうか
-boolean splash = true;            //飛沫を描画するかどうか
+boolean drawFluid = false;
+boolean splash = true;
 
+PImage imgbuffer;
 
 void setup() {
-  size(640, 480, P3D);  // use OPENGL rendering for bilinear filtering on texture
-  background(255);
-  smooth();             // 円滑に
-  frameRate(60);        // 60fps
+  size(640, 480, P3D);    // use OPENGL rendering for bilinear filtering on texture
+  imgbuffer = createImage(width, height, RGB);
+  for(int i = 0; i < imgbuffer.pixels.length; i++) {
+    imgbuffer.pixels[i] = color(255, 255, 255);
+  }
+  image(imgbuffer, 0, 0);
+  smooth();
+  frameRate(60);
   
-  invWidth = 1.0f/width;                     // 幅の逆数
-  invHeight = 1.0f/height;                   // 高さの逆数
-  aspectRatio = width * invHeight;           // アスペクト比
-  aspectRatio2 = aspectRatio * aspectRatio;  // アスペクト比の2乗
+  server = new Server(this, 20000);
+  
+  invWidth = 1.0f/width;
+  invHeight = 1.0f/height;
+  aspectRatio = width * invHeight;
+  aspectRatio2 = aspectRatio * aspectRatio;
 
   // create fluid and set options
   fluidSolver = new MSAFluidSolver2D((int)(FLUID_WIDTH), (int)(FLUID_WIDTH * height/width));
@@ -31,35 +43,65 @@ void setup() {
 
   // create particle system
   particleSystem = new ParticleSystem();
-
+  
 }
 
-
+/*
 void mouseMoved() {
   float mouseNormX = mouseX * invWidth;
   float mouseNormY = mouseY * invHeight;
   float mouseVelX = (mouseX - pmouseX) * invWidth;
   float mouseVelY = (mouseY - pmouseY) * invHeight;
   if(drawFluid == true) {
-    addForce(mouseNormX, mouseNormY, mouseVelX, mouseVelY, 2);
+    addForce(mouseNormX, mouseNormY, mouseVelX, mouseVelY);
   }
 }
+*/
 
 void draw() {
-  //background(255, 255, 255);
-  fluidSolver.update();
-  if(drawFluid == true) {
-    if(splash == true) {
-      drawSplash(6);
-    }
-    particleSystem.updateAndDraw();
-  }
+  fluidSolver.update();  
+  receive();
 }
 
+/*
 void mousePressed() {
   drawFluid ^= true;
-  if(drawFluid == false) {
-    splash = true;
+}
+*/
+
+void receive() {
+  Client c = server.available();
+  if(c != null) {
+    String s = c.readStringUntil('\n');
+    if(s != null) {
+      String[] data = splitTokens(s);
+      drawFluid = boolean(data[3]);
+      float NormX = float(data[0]) * invWidth;
+      float NormY = float(data[1]) * invHeight;
+      float VelX = (float(data[0]) - serverX) * invWidth;
+      float VelY = (float(data[1]) - serverY) * invHeight;
+      float power = float(data[2]) * 5;
+      if(power > 6.0) {
+        power = 6.0;
+      }
+      //println(power);
+      if(drawFluid == true) {
+        addForce(NormX, NormY, VelX, VelY, power);
+        particleSystem.updateAndDraw();
+        if(splash == true) {
+          if(power > 0) {
+            drawSplash(power);
+          }else{
+            splash = false;
+          }
+        }
+      }else if(drawFluid == false){
+        splash = true;
+      }
+      serverX = float(data[0]);
+      serverY = float(data[1]);
+      println(serverX, serverY, power, drawFluid);
+    }
   }
 }
 
@@ -86,7 +128,7 @@ void drawSplash(float power) {
     radiansx[i] = random(-30, 30);
     radiansy[i] = random(-30, 30);
     fill(33.0f/255.0f, 34.0f/255.0f, 34.0f/255.0f);
-    ellipse(mouseX + centerPointx[i], mouseY + centerPointy[i], radiansx[i], radiansy[i]);
+    ellipse(serverX + centerPointx[i], serverY + centerPointy[i], radiansx[i], radiansy[i]);
     
   }
 
@@ -96,46 +138,47 @@ void drawSplash(float power) {
     aroundcirclex[j] = random(-80, 80);
     aroundcircley[j] = random(-1, 20);
     fill(33.0f/255.0f, 34.0f/255.0f, 34.0f/255.0f);
-    ellipse(mouseX, mouseY, aroundcirclex[j], aroundcircley[j]);
+    ellipse(serverX, serverY, aroundcirclex[j], aroundcircley[j]);
   }
   
   for (int i = 0; i < power; i++) {
     int rnd = (int)random(1, 10);
     fill(33.0f/255.0f, 34.0f/255.0f, 34.0f/255.0f);
-    ellipse(mouseX + random(-power*3, power*3), mouseY + random(-power*3, power*3), rnd, rnd);    
+    ellipse(serverX + random(-power*3, power*3), serverY + random(-power*3, power*3), rnd, rnd);    
   }
   splash = false;
 }
 
 // add force and dye to fluid, and create particles
 void addForce(float x, float y, float dx, float dy, float power) {
-  float speed = dx * dx  + dy * dy * aspectRatio2;    // balance the x and y components of speed with the screen aspect ratio
-  if(speed > 0) {
-    if(x<0) x = 0; 
-    else if(x>1) x = 1;
-    if(y<0) y = 0; 
-    else if(y>1) y = 1;
-  
-    //float colorMult = 5;
-    float velocityMult = 30.0f;
-  
-    int index = fluidSolver.getIndexForNormalizedPosition(x, y);
-  
-  
-    color drawColor;
-  
-    colorMode(HSB, 360, 1, 1);
-    float hue = ((x + y) * 180 + frameCount) % 360;
-    drawColor = color(hue, 1, 1);
-    colorMode(RGB, 1);  
-  
-    particleSystem.addParticles(x * width, y * height, int(power * 10), speed);
-    fluidSolver.uOld[index] += dx * velocityMult;
-    fluidSolver.vOld[index] += dy * velocityMult;
-  }
+    float speed = dx * dx  + dy * dy * aspectRatio2;    // balance the x and y components of speed with the screen aspect ratio
+
+    if(speed > 0) {
+        if(x<0) x = 0; 
+        else if(x>1) x = 1;
+        if(y<0) y = 0; 
+        else if(y>1) y = 1;
+
+        //float colorMult = 5;
+        float velocityMult = 30.0f;
+
+        int index = fluidSolver.getIndexForNormalizedPosition(x, y);
+
+
+        color drawColor;
+
+        colorMode(HSB, 360, 1, 1);
+        float hue = ((x + y) * 180 + frameCount) % 360;
+        drawColor = color(hue, 1, 1);
+        colorMode(RGB, 1);  
+
+        particleSystem.addParticles(x * width, y * height, 20, speed);
+        fluidSolver.uOld[index] += dx * velocityMult;
+        fluidSolver.vOld[index] += dy * velocityMult;
+    }
 }
 
 void keyPressed() {
   saveFrame("####.jpg");
-  background(1, 1, 1);
+  background(255, 255, 255);
 }

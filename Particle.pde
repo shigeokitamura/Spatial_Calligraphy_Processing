@@ -8,7 +8,7 @@ class Particle {
   float alpha;
   float mass;
   float depth;
-  
+
   void init(float x, float y) {
     this.x = x;
     this.y = y;
@@ -73,4 +73,5 @@ class Particle {
       line(x-vx, y-vy, -depth, x, y, -depth);
     }
   }
+
 }
