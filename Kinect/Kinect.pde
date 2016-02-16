@@ -1,16 +1,27 @@
 import SimpleOpenNI.*;
 import java.text.DecimalFormat;
 import processing.net.*;
+import processing.serial.*;
 
 SimpleOpenNI kinect;
 Client client;
+Serial serial;
+PrintWriter output;
 
-float pHandX = 0.0f;
-float pHandY = 0.0f;
+float pHandX = 0;
+float pHandY = 0;
 
 float speed = 0.0f; //速度
-float distance = 0.0f;
-float pdistance = 0.0f;
+float distance = 0;
+float pdistance = 0;
+
+float sensorX = 0.0f;
+
+float[] currentRawValues = { 0.0f, 0.0f, 0.0f };
+//This values include gravity force.
+float[] currentOrientationValues = { 0.0f, 0.0f, 0.0f };
+//Values after low pass and high pass filter
+float[] currentAccelerationValues = { 0.0f, 0.0f, 0.0f };
 
 boolean rgb = false;
 
@@ -31,14 +42,17 @@ void setup() {
   //size(kinect.rgbWidth(), kinect.rgbHeight());
   size(640, 480);
   frameRate(30);
-  df = new DecimalFormat("0.0000000000");
+  df = new DecimalFormat("000.00");
   client = new Client(this, "127.0.0.1", 20000);
+  //serial = new Serial(this, "/dev/cu.usbmodem1411", 9600);
+  serial = new Serial(this, "/dev/cu.usbmodem1D1111", 9600);
+  output = createWriter("log.csv");
 }
 
 void draw() {
   background(0, 0, 0);
   kinect.update(); //Kinectのデータの更新
-  detectSpeed();
+  accel();
   if(rgb) {
     tint(255, 255, 255, 255/2);
     image(kinect.userImage(), 0, 0); //ユーザ画像の描画
@@ -47,16 +61,17 @@ void draw() {
     tint(255, 255, 255, 255);
     image(kinect.userImage(), 0, 0);
   }  
+  
   //ユーザごとの骨格のトラッキングができていたら骨格を描画
   for(int userId = 1; userId <= kinect.getNumberOfUsers(); userId++) {
     if(kinect.isTrackingSkeleton(userId)) {
-      strokeWeight(2);       //線の太さの設定
+      strokeWeight(1);       //線の太さの設定
       stroke(255, 0, 0);      //線の色の設定
       drawSkeleton(userId);   //骨格の描画
       detectGesture(userId);  //ジェスチャ認識
     }
   }
-  
+  detectSpeed();
   
 }
 
@@ -154,31 +169,78 @@ void detectGesture(int userId) {
   handF = hand2d_R;
   handF.z = hand3d_R.z;
   
+  
   if(handF.z < kneeF.z) {
     fill(255, 0, 0);
     ellipse(lerp(handF.x, pHandX, 0.5), lerp(handF.y, pHandY, 0.5), 10, 10);
-    client.write(lerp(handF.x, pHandX, 0.5) + " " + lerp(handF.y, pHandY, 0.5) + " " + speed + " " + "true" + '\n');
+    //client.write(lerp(handF.x, pHandX, 0.5) + " " + lerp(handF.y, pHandY, 0.5) + " " + handF.z + " " + "true" + '\n');
+    client.write(lerp(handF.x, pHandX, 0.5) + " " + lerp(handF.y, pHandY, 0.5) + " " + -sensorX + " " + "true" + " " + speed + '\n');
+    
+    //println("wrote");
   }else{
-    client.write(lerp(handF.x, pHandX, 0.5) + " " + lerp(handF.y, pHandY, 0.5) + " " + speed + " " + "false" + '\n');
+    //client.write(lerp(handF.x, pHandX, 0.5) + " " + lerp(handF.y, pHandY, 0.5) + " " + handF.z + " " + "false" + '\n');
+    client.write(lerp(handF.x, pHandX, 0.5) + " " + lerp(handF.y, pHandY, 0.5) + " " + -sensorX + " " + "false" + " " + speed + '\n');
+    //println("wrote");
   }
+  /*
+  if(sensorX == ) {
+    fill(255, 0, 0);
+    textSize(50);
+    text("加速度センサーが認識されていません。", 30, 30);
+  }
+  */
   distance = handF.z;
   pHandX = handF.x;
   pHandY = handF.y;
+  
 }
 
 void detectSpeed() {
-  speed = (float)((pdistance - distance) * (float)frameRate);
+  speed = (pdistance - distance) * (float)frameRate;
+  speed /= 1000;
   textSize(30);
   fill(255, 255, 255);
-  if(speed >= 0) {
-    text("+" + df.format(speed) + "m/s", 100, 100);
+  if(-sensorX >= 0) {
+    text("+" + df.format(-sensorX) + "m/s", 100, 100);
   }else{
-    text(df.format(speed) + "m/s", 100, 100);
+    text(df.format(-sensorX) + "m/s", 100, 100);
   }
   //println(speed);
   pdistance = distance;
 }
 
+void accel() {
+  while(serial.available() > 0) {
+    String str = serial.readStringUntil('\n');
+    if(str != null) {
+      String str2[] = split(str, ", ");
+      for(int i = 0; i < 3; i++) {
+        if(str2.length > i) {
+          currentRawValues[i] = float(str2[i]);
+        }
+      }
+      onSensorChanged();
+    }
+  }
+}
+
+void onSensorChanged() {
+  currentOrientationValues[0] = currentRawValues[0] * 0.1f + currentOrientationValues[0] * (1.0f - 0.1f);
+  currentOrientationValues[1] = currentRawValues[1] * 0.1f + currentOrientationValues[1] * (1.0f - 0.1f);
+  currentOrientationValues[2] = currentRawValues[2] * 0.1f + currentOrientationValues[2] * (1.0f - 0.1f);
+  
+  currentAccelerationValues[0] = currentRawValues[0] - currentOrientationValues[0];
+  currentAccelerationValues[1] = currentRawValues[1] - currentOrientationValues[1];
+  currentAccelerationValues[2] = currentRawValues[2] - currentOrientationValues[2];
+  
+  //sensorX = currentAccelerationValues[0];
+  sensorX = currentRawValues[0];
+}
+
 void keyPressed() {
   rgb ^= true;
+}
+
+void stop() {
+  output.close();
 }
